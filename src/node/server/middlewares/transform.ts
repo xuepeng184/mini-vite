@@ -7,8 +7,12 @@ import { isCssRequest } from "../../utils";
 const debug = createDebug("dev");
 
 export async function transformRequest(url: string, serverContext: ServerContext) {
-  const { pluginContainer } = serverContext;
+  const { moduleGraph,pluginContainer } = serverContext;
   url = cleanUrl(url);
+  let mod=await moduleGraph.getModuleByUrl(url)
+  if(mod&& mod.transformResult){
+    return mod.transformResult
+  }
   //依次调用插件容器的resolveId,load,transform方法
   const resolvedResult = await pluginContainer.resolveId(url);
   let transformResult;
@@ -17,9 +21,14 @@ export async function transformRequest(url: string, serverContext: ServerContext
     if (typeof code === "object" && code !== null) {
       code = code.code;
     }
+    const {moduleGraph}=serverContext
+    mod=await moduleGraph.ensureEntryFromUrl(url)
     if (code) {
       transformResult = await pluginContainer.transform(code as string, resolvedResult?.id);
     }
+  }
+  if(mod){
+    mod.transformResult=transformResult
   }
   return transformResult;
 }

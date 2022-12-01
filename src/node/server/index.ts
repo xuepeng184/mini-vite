@@ -9,12 +9,14 @@ import { indexHtmlMiddleware } from "./middlewares/indexHtml";
 import { transformMiddleware } from "./middlewares/transform";
 import { staticMiddleware } from "./middlewares/static";
 import { normalizePath } from "../utils";
+import { ModuleGraph } from "../ModuleGraph";
 
 export interface ServerContext {
   root: string;
   pluginContainer: PluginContainer;
   app: connect.Server;
   plugins: Plugin[];
+  moduleGraph:ModuleGraph
 }
 
 export async function startDevServer() {
@@ -24,6 +26,7 @@ export async function startDevServer() {
   const startTime = Date.now();
   const plugins = resolvePlugins();
   //创建插件容器
+  const moduleGraph=new ModuleGraph((url)=>pluginContainer.resolveId(url))
   const pluginContainer = createPluginContainer(plugins);
 
   //创建configureServer所需的server实例
@@ -32,6 +35,7 @@ export async function startDevServer() {
     app,
     pluginContainer,
     plugins,
+    moduleGraph
   };
 
   for (const plugin of plugins) {
