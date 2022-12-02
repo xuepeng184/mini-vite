@@ -48,3 +48,4 @@ export function getShortName(file: string, root: string) {
 export function removeImportQuery(url: string): string {
   return url.replace(/\?import$/, "");
 }
+

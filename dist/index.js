@@ -23,7 +23,7 @@ var import_cac = __toESM(require("cac"));
 
 // src/node/server/index.ts
 var import_connect = __toESM(require("connect"));
-var import_picocolors2 = require("picocolors");
+var import_picocolors3 = require("picocolors");
 
 // src/node/optimizer/index.ts
 var import_path4 = __toESM(require("path"));
@@ -59,6 +59,7 @@ var JS_TYPES_RE = /\.(?:j|t)sx?$|\.mjs$/;
 var QUERY_RE = /\?.*$/s;
 var HASH_RE = /#.*$/s;
 var DEFAULT_EXTENSIONS = [".tsx", ".ts", ".jsx", "js"];
+var HMR_PORT = 24678;
 
 // src/node/optimizer/scanPlugin.ts
 function scanPlugin(deps) {
@@ -333,6 +334,9 @@ function importAnalysisPlugin() {
       await import_es_module_lexer2.init;
       const [imports] = (0, import_es_module_lexer2.parse)(code);
       const ms = new import_magic_string.default(code);
+      const { moduleGraph } = serverContext;
+      const curMod = moduleGraph.getModuleById(id);
+      const importedModules = /* @__PURE__ */ new Set();
       for (const importInfo of imports) {
         const { s: modStart, e: modEnd, n: modeSource } = importInfo;
         if (!modeSource)
@@ -348,13 +352,16 @@ function importAnalysisPlugin() {
         if (BARE_IMPORT_RE.test(modeSource)) {
           const bundlePath = normalizePath(import_path7.default.join("/", PRE_BUNDLE_DIR, `${modeSource}.js`));
           ms.overwrite(modStart, modEnd, bundlePath);
+          importedModules.add(bundlePath);
         } else if (modeSource.startsWith(".") || modeSource.startsWith("/")) {
           const resolved = await this.resolve(modeSource, id);
           if (resolved) {
             ms.overwrite(modStart, modEnd, resolved.id);
+            importedModules.add(resolved);
           }
         }
       }
+      moduleGraph.updateModuleInfo(curMod, importedModules);
       return {
         code: ms.toString(),
         map: ms.generateMap()
@@ -508,8 +515,12 @@ function indexHtmlMiddleware(serverContext) {
 var import_debug2 = __toESM(require("debug"));
 var debug2 = (0, import_debug2.default)("dev");
 async function transformRequest(url, serverContext) {
-  const { pluginContainer } = serverContext;
+  const { moduleGraph, pluginContainer } = serverContext;
   url = cleanUrl(url);
+  let mod = await moduleGraph.getModuleByUrl(url);
+  if (mod && mod.transformResult) {
+    return mod.transformResult;
+  }
   const resolvedResult = await pluginContainer.resolveId(url);
   let transformResult;
   if (resolvedResult?.id) {
@@ -517,9 +528,14 @@ async function transformRequest(url, serverContext) {
     if (typeof code === "object" && code !== null) {
       code = code.code;
     }
+    const { moduleGraph: moduleGraph2 } = serverContext;
+    mod = await moduleGraph2.ensureEntryFromUrl(url);
     if (code) {
       transformResult = await pluginContainer.transform(code, resolvedResult?.id);
     }
+  }
+  if (mod) {
+    mod.transformResult = transformResult;
   }
   return transformResult;
 }
@@ -565,18 +581,127 @@ function staticMiddleware(root) {
   };
 }
 
+// src/node/ModuleGraph.ts
+var ModuleNode = class {
+  constructor(url) {
+    this.id = null;
+    this.importers = /* @__PURE__ */ new Set();
+    this.importedModules = /* @__PURE__ */ new Set();
+    this.transformResult = null;
+    this.lastHMRTimestamp = 0;
+    this.url = url;
+  }
+};
+var ModuleGraph = class {
+  constructor(resolveId) {
+    this.resolveId = resolveId;
+    this.urlToModuleMap = /* @__PURE__ */ new Map();
+    this.idToModuleMap = /* @__PURE__ */ new Map();
+  }
+  getModuleById(id) {
+    return this.idToModuleMap.get(id);
+  }
+  async getModuleByUrl(rawUrl) {
+    const { url } = await this._resolve(rawUrl);
+    return this.urlToModuleMap.get(url);
+  }
+  async ensureEntryFromUrl(rawUrl) {
+    const { url, resolvedId } = await this._resolve(rawUrl);
+    if (this.urlToModuleMap.has(url)) {
+      return this.urlToModuleMap.get(url);
+    }
+    const mod = new ModuleNode(url);
+    module.id = resolvedId;
+    this.urlToModuleMap.set(url, mod);
+    this.idToModuleMap.set(resolvedId, mod);
+    return mod;
+  }
+  async updateModuleInfo(mod, importedModules) {
+    const prevImports = mod.importedModules;
+    for (const curImports of importedModules) {
+      const dep = typeof curImports === "string" ? await this.ensureEntryFromUrl(cleanUrl(curImports)) : curImports;
+      if (dep) {
+        mod.importedModules.add(dep);
+        dep.importers.add(mod);
+      }
+    }
+    for (const prevImport of prevImports) {
+      if (!importedModules.has(prevImport.url)) {
+        prevImport.importers.delete(mod);
+      }
+    }
+  }
+  invalidateModule(file) {
+    const mod = this.idToModuleMap.get(file);
+    if (mod) {
+      mod.lastHMRTimestamp = Date.now();
+      mod.transformResult = null;
+      mod.importers.forEach((importer) => {
+        this.invalidateModule(importer.id);
+      });
+    }
+  }
+  async _resolve(url) {
+    const resolved = await this.resolveId(url);
+    const resolvedId = resolved?.id || url;
+    return { url, resolvedId };
+  }
+};
+
+// src/node/server/index.ts
+var import_chokidar = __toESM(require("chokidar"));
+
+// src/node/ws.ts
+var import_picocolors2 = require("picocolors");
+var import_ws = require("ws");
+function createWebSocketServer(server) {
+  let wss;
+  wss = new import_ws.WebSocketServer({ port: HMR_PORT });
+  wss.on("connection", (socket) => {
+    socket.send(JSON.stringify({ type: "connected" }));
+  });
+  wss.on("error", (e) => {
+    if (e.code !== "EADDRINUSE") {
+      console.error((0, import_picocolors2.red)(`WebSocket server error:
+${e.stack || e.message}`));
+    }
+  });
+  return {
+    send(payload) {
+      const stringified = JSON.stringify(payload);
+      wss.clients.forEach((client) => {
+        if (client.readyState === import_ws.WebSocket.OPEN) {
+          client.send(stringified);
+        }
+      });
+    },
+    close() {
+      wss.close();
+    }
+  };
+}
+
 // src/node/server/index.ts
 async function startDevServer() {
   const app = (0, import_connect.default)();
   const root = process.cwd();
   const startTime = Date.now();
   const plugins = resolvePlugins();
+  const watcher = import_chokidar.default.watch(root, {
+    ignored: ["**/node_modules/**", "**/.git/**"],
+    ignoreInitial: true
+  });
+  const moduleGraph = new ModuleGraph((url) => pluginContainer.resolveId(url));
   const pluginContainer = createPluginContainer(plugins);
+  const ws = createWebSocketServer(app);
   const serverContext = {
     root: normalizePath(process.cwd()),
     app,
     pluginContainer,
-    plugins
+    plugins,
+    moduleGraph,
+    ws,
+    watcher
   };
   for (const plugin of plugins) {
     if (plugin.configureServer) {
@@ -588,8 +713,8 @@ async function startDevServer() {
   app.use(staticMiddleware(serverContext.root));
   app.listen(3e3, async () => {
     await optimize(root);
-    console.log((0, import_picocolors2.green)("\u{1F680} xp\u7684No-Bundle\u670D\u52A1\u5DF2\u7ECF\u542F\u52A8\u5566!"), `\u8017\u65F6\uFF1A${Date.now() - startTime}ms`);
-    console.log(`>\u672C\u5730\u8BBF\u95EE\u8DEF\u5F84\uFF1A${(0, import_picocolors2.blue)("http://localhost:3000")}`);
+    console.log((0, import_picocolors3.green)("\u{1F680} xp\u7684No-Bundle\u670D\u52A1\u5DF2\u7ECF\u542F\u52A8\u5566!"), `\u8017\u65F6\uFF1A${Date.now() - startTime}ms`);
+    console.log(`>\u672C\u5730\u8BBF\u95EE\u8DEF\u5F84\uFF1A${(0, import_picocolors3.blue)("http://localhost:3000")}`);
   });
 }
 
