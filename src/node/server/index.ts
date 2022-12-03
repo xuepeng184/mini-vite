@@ -11,6 +11,7 @@ import { normalizePath } from "../utils";
 import { ModuleGraph } from "../ModuleGraph";
 import chokidar,{FSWatcher} from 'chokidar'
 import { createWebSocketServer } from '../ws';
+import { bindingHMREvents } from "../hmr";
 
 export interface ServerContext {
   root: string;
@@ -50,6 +51,7 @@ export async function startDevServer() {
     ws,
     watcher
   };
+  bindingHMREvents(serverContext)
 
   for (const plugin of plugins) {
     if (plugin.configureServer) {
