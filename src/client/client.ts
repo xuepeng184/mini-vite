@@ -2,6 +2,7 @@
 console.log("[xp vite] connecting");
 
 //创建websocket客户端实例
+//这里的HMR__PORT在插件中会被替换为真实端口
 const socket = new WebSocket(`ws://localhost:__HMR_PORT__`, "vite-hmr");
 
 //接收服务端的更新信息

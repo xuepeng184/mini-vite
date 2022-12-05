@@ -39,3 +39,6 @@ export const DEFAULT_EXTENSIONS = [".tsx", ".ts", ".jsx", "js"];
 
 //websocket地址
 export const HMR_PORT = 24678;
+
+//HMR的客户端的公共路径
+export const CLIENT_PUBLIC_PATH="/@vite/client"

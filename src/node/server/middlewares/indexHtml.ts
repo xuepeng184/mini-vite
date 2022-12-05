@@ -21,7 +21,7 @@ export function indexHtmlMiddleware(
         html = html.replace('Vite App', 'xpppp');
         // console.log('-------html',html);
 
-        //通过执行插件的transformindexhtml方法来进行自定义修改
+        //通过执行插件的transformIndexHtml方法来进行自定义修改
         for (const plugin of serverContext.plugins) {
           if (plugin.transformIndexHtml) {
             html = await plugin.transformIndexHtml(html);

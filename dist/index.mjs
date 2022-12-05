@@ -11,7 +11,7 @@ import cac from "cac";
 
 // src/node/server/index.ts
 import connect from "connect";
-import { blue, green as green2 } from "picocolors";
+import { blue as blue2, green as green3 } from "picocolors";
 
 // src/node/optimizer/index.ts
 import path4 from "path";
@@ -48,6 +48,7 @@ var QUERY_RE = /\?.*$/s;
 var HASH_RE = /#.*$/s;
 var DEFAULT_EXTENSIONS = [".tsx", ".ts", ".jsx", "js"];
 var HMR_PORT = 24678;
+var CLIENT_PUBLIC_PATH = "/@vite/client";
 
 // src/node/optimizer/scanPlugin.ts
 function scanPlugin(deps) {
@@ -408,9 +409,47 @@ function assetPlugin() {
   };
 }
 
+// src/node/plugins/clientInject.ts
+import fs2 from "fs-extra";
+import path8 from "path";
+function clientInjectPlugin() {
+  let serverContext;
+  return {
+    name: "m-vite:client-inject",
+    configureServer(s) {
+      serverContext = s;
+    },
+    resolveId(id) {
+      if (id == CLIENT_PUBLIC_PATH) {
+        return { id };
+      }
+      return null;
+    },
+    async load(id) {
+      if (id === CLIENT_PUBLIC_PATH) {
+        const realPath = path8.join(
+          serverContext.root,
+          "node_modules",
+          "mini-vite",
+          "dist",
+          "client.mjs"
+        );
+        const code = await fs2.readFile(realPath, "utf-8");
+        return {
+          code: code.replace("__HMR_PORT__", JSON.stringify(HMR_PORT))
+        };
+      }
+    },
+    transformIndexHtml(raw) {
+      return raw.replace(/(<head[^>]*>)/i, `$1<script type="module" src="${CLIENT_PUBLIC_PATH}"><\/script>`);
+    }
+  };
+}
+
 // src/node/plugins/index.ts
 function resolvePlugins() {
   return [
+    clientInjectPlugin(),
     resolvePlugin(),
     esbuildTransformPlugin(),
     importAnalysisPlugin(),
@@ -474,13 +513,13 @@ var createPluginContainer = (plugins) => {
 };
 
 // src/node/server/middlewares/indexHtml.ts
-import path8 from "path";
+import path9 from "path";
 import { pathExists as pathExists2, readFile as readFile3 } from "fs-extra";
 function indexHtmlMiddleware(serverContext) {
   return async (req, res, next) => {
     if (req.url === "/") {
       const { root } = serverContext;
-      const indexHtmlPath = path8.join(root, "index.html");
+      const indexHtmlPath = path9.join(root, "index.html");
       if (await pathExists2(indexHtmlPath)) {
         const rawHtml = await readFile3(indexHtmlPath, "utf-8");
         let html = rawHtml;
@@ -669,6 +708,28 @@ ${e.stack || e.message}`));
   };
 }
 
+// src/node/hmr.ts
+import { blue, green as green2 } from "picocolors";
+function bindingHMREvents(serverContext) {
+  const { watcher, ws, root } = serverContext;
+  watcher.on("change", async (file) => {
+    console.log(`${blue("[hmr]")} ${green2(file)} change`);
+    const { moduleGraph } = serverContext;
+    await moduleGraph.invalidateModule(file);
+    ws.send({
+      type: "update",
+      updates: [
+        {
+          type: "js-update",
+          timestamp: Date.now(),
+          path: "/" + getShortName(file, root),
+          acceptedPath: "/" + getShortName(file, root)
+        }
+      ]
+    });
+  });
+}
+
 // src/node/server/index.ts
 async function startDevServer() {
   const app = connect();
@@ -691,6 +752,7 @@ async function startDevServer() {
     ws,
     watcher
   };
+  bindingHMREvents(serverContext);
   for (const plugin of plugins) {
     if (plugin.configureServer) {
       await plugin.configureServer(serverContext);
@@ -701,8 +763,8 @@ async function startDevServer() {
   app.use(staticMiddleware(serverContext.root));
   app.listen(3e3, async () => {
     await optimize(root);
-    console.log(green2("\u{1F680} xp\u7684No-Bundle\u670D\u52A1\u5DF2\u7ECF\u542F\u52A8\u5566!"), `\u8017\u65F6\uFF1A${Date.now() - startTime}ms`);
-    console.log(`>\u672C\u5730\u8BBF\u95EE\u8DEF\u5F84\uFF1A${blue("http://localhost:3000")}`);
+    console.log(green3("\u{1F680} xp\u7684No-Bundle\u670D\u52A1\u5DF2\u7ECF\u542F\u52A8\u5566!"), `\u8017\u65F6\uFF1A${Date.now() - startTime}ms`);
+    console.log(`>\u672C\u5730\u8BBF\u95EE\u8DEF\u5F84\uFF1A${blue2("http://localhost:3000")}`);
   });
 }
 
