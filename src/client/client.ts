@@ -9,6 +9,7 @@ const socket = new WebSocket(`ws://localhost:__HMR_PORT__`, "vite-hmr");
 socket.addEventListener("message", async ({ data }) => {
   handleMessage(JSON.parse(data)).catch(console.error);
 });
+console.log('111');
 
 async function handleMessage(payload: any) {
   switch (payload.type) {
